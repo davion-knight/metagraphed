@@ -7566,3 +7566,38 @@ test("rpc-usage-prune maps a DB failure to a clean 502 instead of throwing", asy
   );
   expect(res.status).toBe(502);
 });
+
+// #6877: the distinct-mover / distinct-sender subqueries previously selected an
+// ungrouped `observed_at` alongside the grouped `coldkey`, which Postgres
+// rejects ("must appear in the GROUP BY clause") and 500'd both live routes.
+// The fix selects only the grouped column, aliased so the public-safety
+// scanner's SQL allowlist covers it. Guard both routes render 200 and emit the
+// corrected single-column subquery, never the old two-column shape.
+test("GET /api/v1/subnets/:netuid/stake-transfers 200s with the coldkey-only distinct-sender subquery (#6877)", async () => {
+  mockRows.current = [
+    { transfers: 5, distinct_senders: 3, newest_observed: "2026-07-18T16:00:00.000Z" },
+  ];
+  const res = await req("/api/v1/subnets/7/stake-transfers?window=30d");
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.netuid).toBe(7);
+  expect(body.transfers).toBe(5);
+  expect(body.distinct_senders).toBe(3);
+  const q = queryText();
+  expect(q).toContain("SELECT coldkey AS ck FROM account_events");
+  expect(q).not.toMatch(/SELECT\s+coldkey\s*,\s*observed_at\s+FROM\s+account_events/i);
+});
+
+test("GET /api/v1/subnets/:netuid/stake-moves 200s with the coldkey-only distinct-mover subquery (#6877)", async () => {
+  mockRows.current = [
+    { movements: 4, distinct_movers: 2, newest_observed: "2026-07-18T15:00:00.000Z" },
+  ];
+  const res = await req("/api/v1/subnets/7/stake-moves?window=30d");
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.movements).toBe(4);
+  expect(body.distinct_movers).toBe(2);
+  const q = queryText();
+  expect(q).toContain("SELECT coldkey AS ck FROM account_events");
+  expect(q).not.toMatch(/SELECT\s+coldkey\s*,\s*observed_at\s+FROM\s+account_events/i);
+});

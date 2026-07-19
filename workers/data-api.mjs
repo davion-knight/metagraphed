@@ -6389,14 +6389,17 @@ export default {
           );
           // The distinct-mover count is a correlated subquery (grouped rows,
           // then COUNT(*) of the groups) rather than COUNT(DISTINCT <col>) so
-          // the delegating account's column is only ever named once, in the
-          // one already-established safe form (bare identifier immediately
-          // before a comma) the public-safety scanner's SQL-usage allowlist
-          // covers.
+          // the delegating account's column is only ever named once, in an
+          // already-established safe form (bare identifier immediately before
+          // an `AS` alias) the public-safety scanner's SQL-usage allowlist
+          // covers. #6877: the subquery previously also selected `observed_at`
+          // but never read it, which is invalid under Postgres's GROUP BY rule
+          // (every non-aggregated selected column must be grouped) and 500'd the
+          // route; drop it and alias the surviving column.
           const rows = await sql`
           SELECT COUNT(*) AS movements,
             (SELECT COUNT(*) FROM (
-              SELECT coldkey, observed_at FROM account_events
+              SELECT coldkey AS ck FROM account_events
               WHERE netuid = ${netuid} AND event_kind = ${STAKE_MOVED_EVENT_KIND} AND observed_at >= ${cutoff}
               GROUP BY 1
             ) movers) AS distinct_movers,
@@ -6430,7 +6433,7 @@ export default {
           const rows = await sql`
           SELECT COUNT(*) AS transfers,
             (SELECT COUNT(*) FROM (
-              SELECT coldkey, observed_at FROM account_events
+              SELECT coldkey AS ck FROM account_events
               WHERE netuid = ${netuid} AND event_kind = ${STAKE_TRANSFERRED_EVENT_KIND} AND observed_at >= ${cutoff}
               GROUP BY 1
             ) senders) AS distinct_senders,
